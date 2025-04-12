@@ -246,7 +246,7 @@ def translate_single_file(api_key, input_file, output_folder, profile_path, api_
                 async def translate_with_gemini():
                     try:
                         client = GeminiClient(secure_1psid, secure_1psidts)
-                        await client.init(timeout=30)
+                        await client.init(timeout=400)
                         response = await client.generate_content(prompt=prompt, model=custom_settings['model'])
                         translated_text = response.text
                         await client.close()
