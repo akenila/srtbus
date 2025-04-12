@@ -19,8 +19,14 @@ def split_chrome_profile_path(full_path):
     
     return user_data_dir, profile_name
 
-# Hàm chọn file SRT
+# Hàm chọn thư mục chứa file SRT
+def select_srt_folder(entry):
+    folder_path = filedialog.askdirectory()
+    if folder_path:
+        entry.delete(0, tk.END)
+        entry.insert(0, folder_path)
 
+# Hàm chọn file SRT
 def select_srt_file(entry):
     file_path = filedialog.askopenfilename(filetypes=[("SRT files", "*.srt")])
     if file_path:
@@ -45,7 +51,7 @@ def select_profile_file(entry):
 # Hàm lưu cài đặt custom
 custom_settings = {}
 
-def save_custom_settings(model_var, mapping_text, prompt_text):
+def save_custom_settings(model_var, mapping_text, prompt_text, api_key=None, profile_path=None):
     try:
         selected_model = model_var.get()
         if not selected_model:
@@ -62,7 +68,9 @@ def save_custom_settings(model_var, mapping_text, prompt_text):
         custom_settings = {
             "model": selected_model,
             "mapping": mapping,
-            "prompt": prompt_text.strip()
+            "prompt": prompt_text.strip(),
+            "api_key": api_key,
+            "profile_path": profile_path
         }
         messagebox.showinfo("Success", "Settings saved successfully!")
     except Exception as e:
@@ -120,11 +128,48 @@ def process_output_file(output_path):
         print(f"Error processing output file: {e}")
 
 # Hàm dịch file (chạy trong luồng riêng)
-def translate_file_thread(api_key, input_file, output_folder, translate_button, profile_path, api_type):
+def translate_file_thread(api_key, input_path, output_folder, translate_button, profile_path, api_type):
     try:
         translate_button.config(text="Translating...")
         translate_button.config(state="disabled")
+        
+        # Kiểm tra nếu đầu vào là thư mục hay file
+        if os.path.isdir(input_path):
+            # Xử lý khi đầu vào là thư mục
+            srt_files = [os.path.join(input_path, f) for f in os.listdir(input_path) 
+                       if f.lower().endswith('.srt')]
+            if not srt_files:
+                messagebox.showinfo("Information", "No SRT files found in the selected folder.")
+                return
+                
+            total_files = len(srt_files)
+            processed_files = 0
+            
+            for input_file in srt_files:
+                # Cập nhật trạng thái
+                file_name = os.path.basename(input_file)
+                translate_button.config(text=f"Translating {processed_files+1}/{total_files}: {file_name}")
+                root = translate_button.winfo_toplevel()
+                root.update_idletasks()
+                
+                # Dịch từng file
+                translate_single_file(api_key, input_file, output_folder, profile_path, api_type)
+                processed_files += 1
+                
+            messagebox.showinfo("Success", f"Translation completed for {processed_files} files.")
+        else:
+            # Xử lý khi đầu vào là file đơn
+            translate_single_file(api_key, input_path, output_folder, profile_path, api_type)
+            
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to translate: {e}")
+    finally:
+        translate_button.config(text="Translate")
+        translate_button.config(state="normal")
 
+# Hàm dịch một file đơn lẻ
+def translate_single_file(api_key, input_file, output_folder, profile_path, api_type):
+    try:
         file_name = os.path.basename(input_file)
         target_lang = "en"  # Default language
         for key, lang in custom_settings.get("mapping", {}).items():
@@ -135,6 +180,10 @@ def translate_file_thread(api_key, input_file, output_folder, translate_button, 
         with open(input_file, "r", encoding="utf-8") as f:
             content = f.read()
         prompt = f"Translate the following text to {target_lang}:\n\n{content}"
+        
+        if custom_settings.get("prompt"):
+            prompt = custom_settings["prompt"].replace("{content}", content).replace("{target_lang}", target_lang)
+            
         if api_type == "AI Studio":
             # AI Studio API logic
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{custom_settings['model']}:generateContent?key={api_key}"
@@ -173,11 +222,6 @@ def translate_file_thread(api_key, input_file, output_folder, translate_button, 
                 service = Service(ChromeDriverManager().install())
                 driver = webdriver.Chrome(service=service, options=chrome_options)
                 
-                # Status update in UI
-                translate_button.config(text="Getting cookies...")
-                root = translate_button.winfo_toplevel()
-                root.update_idletasks()
-                
                 driver.get("https://gemini.google.com")
                 time.sleep(10)  # Wait for the page to load
                 
@@ -197,8 +241,6 @@ def translate_file_thread(api_key, input_file, output_folder, translate_button, 
                     raise Exception("Required cookies not found. Please check your Chrome profile.")
                 
                 # Use the async function with asyncio
-                translate_button.config(text="Translating with Gemini...")
-                root.update_idletasks()
                 
                 # Create an async function to use GeminiClient
                 async def translate_with_gemini():
@@ -229,13 +271,11 @@ def translate_file_thread(api_key, input_file, output_folder, translate_button, 
 
         # Xử lý nội dung file output
         process_output_file(output_file)
+        
+        return output_file
 
-        messagebox.showinfo("Success", f"Translation completed. Output saved to {output_file}")
     except Exception as e:
-        messagebox.showerror("Error", f"Failed to translate file: {e}")
-    finally:
-        translate_button.config(text="Translate")
-        translate_button.config(state="normal")
+        raise Exception(f"Failed to translate {os.path.basename(input_file)}: {e}")
 
 # Giao diện chính
 
@@ -248,11 +288,14 @@ def main():
     api_var = ttk.Combobox(root, values=["AI Studio", "Gemini"])
     api_var.grid(row=0, column=1, padx=5, pady=5)
 
-    # Input file
-    tk.Label(root, text="Input SRT File:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+    # Input file or folder
+    tk.Label(root, text="Input SRT File or Folder:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
     input_file_entry = tk.Entry(root, width=50)
     input_file_entry.grid(row=1, column=1, padx=5, pady=5)
-    tk.Button(root, text="Browse", command=lambda: select_srt_file(input_file_entry)).grid(row=1, column=2, padx=5, pady=5)
+    input_browse_frame = tk.Frame(root)
+    input_browse_frame.grid(row=1, column=2, padx=5, pady=5)
+    tk.Button(input_browse_frame, text="File", command=lambda: select_srt_file(input_file_entry)).grid(row=0, column=0, padx=2)
+    tk.Button(input_browse_frame, text="Folder", command=lambda: select_srt_folder(input_file_entry)).grid(row=0, column=1, padx=2)
 
     # Output folder
     tk.Label(root, text="Output Folder:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
@@ -297,7 +340,7 @@ def main():
     mapping_text.grid(row=5, column=1, padx=5, pady=5)
 
     # Nút lưu cài đặt
-    tk.Button(root, text="Save Settings", command=lambda: [save_custom_settings(model_var, mapping_text.get("1.0", tk.END), ""), save_settings_to_file()]).grid(row=6, column=1, padx=5, pady=10, sticky="e")
+    tk.Button(root, text="Save Settings", command=lambda: [save_custom_settings(model_var, mapping_text.get("1.0", tk.END), "", api_key_entry.get(), profile_entry.get()), save_settings_to_file()]).grid(row=6, column=1, padx=5, pady=10, sticky="e")
 
     # Translate button
     translate_button = tk.Button(root, text="Translate", command=lambda: threading.Thread(target=translate_file_thread, args=(api_key_entry.get(), input_file_entry.get(), output_folder_entry.get(), translate_button, profile_entry.get(), api_var.get())).start())
@@ -310,6 +353,8 @@ def main():
         mapping_text.delete("1.0", tk.END)
         for key, value in custom_settings.get("mapping", {}).items():
             mapping_text.insert(tk.END, f"{key}:{value}\n")
+        api_key_entry.insert(0, custom_settings.get("api_key", ""))
+        profile_entry.insert(0, custom_settings.get("profile_path", ""))
 
     root.mainloop()
 
