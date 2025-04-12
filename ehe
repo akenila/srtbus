@@ -276,7 +276,54 @@ def translate_single_file(api_key, input_file, output_folder, profile_path, api_
 
     except Exception as e:
         raise Exception(f"Failed to translate {os.path.basename(input_file)}: {e}")
-
+def save_all_settings(api_var, input_file_entry, output_folder_entry, api_key_entry, profile_entry, model_var, mapping_text):
+    """Save all settings from UI into JSON file"""
+    try:
+        global custom_settings
+        
+        # Get API type
+        api_type = api_var.get()
+        
+        # Process mapping text
+        mapping = {}
+        for line in mapping_text.get("1.0", tk.END).splitlines():
+            if ":" in line:
+                key, value = line.split(":", 1)
+                mapping[key.strip()] = value.strip()
+        
+        # Save all settings in dictionary
+        custom_settings = {
+            "api_type": api_type,
+            "input_path": input_file_entry.get(),
+            "output_folder": output_folder_entry.get(),
+            "api_key": api_key_entry.get(),
+            "profile_path": profile_entry.get(),
+            "model": model_var.get(),
+            "mapping": mapping
+        }
+        
+        # Save to file
+        with open("subsrt_settings.json", "w", encoding="utf-8") as f:
+            json.dump(custom_settings, f, ensure_ascii=False, indent=4)
+            
+        messagebox.showinfo("Success", "All settings saved successfully!")
+        return True
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to save settings: {e}")
+        return False
+    
+def load_settings_from_file():
+    global custom_settings
+    try:
+        with open("subsrt_settings.json", "r", encoding="utf-8") as f:
+            custom_settings = json.load(f)
+        return True
+    except FileNotFoundError:
+        custom_settings = {}
+        return False
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to load settings: {e}")
+        return False
 # Giao diện chính
 
 def main():
@@ -313,7 +360,7 @@ def main():
     profile_entry = tk.Entry(root, width=50)
     profile_button = tk.Button(root, text="Browse", command=lambda: select_profile_file(profile_entry))
 
-    def update_api_fields(event):
+    def update_api_fields(event=None):
         if api_var.get() == "Gemini":
             api_key_label.grid_remove()
             api_key_entry.grid_remove()
@@ -339,24 +386,75 @@ def main():
     mapping_text = tk.Text(root, height=5, width=50)
     mapping_text.grid(row=5, column=1, padx=5, pady=5)
 
-    # Nút lưu cài đặt
-    tk.Button(root, text="Save Settings", command=lambda: [save_custom_settings(model_var, mapping_text.get("1.0", tk.END), "", api_key_entry.get(), profile_entry.get()), save_settings_to_file()]).grid(row=6, column=1, padx=5, pady=10, sticky="e")
+    # Tạo frame ở cuối cho các nút
+    button_frame = tk.Frame(root)
+    button_frame.grid(row=7, column=0, columnspan=3, padx=5, pady=10)
+    
+    # Nút lưu thiết lập
+    save_button = tk.Button(
+        button_frame, 
+        text="Save All Settings", 
+        command=lambda: save_all_settings(
+            api_var, 
+            input_file_entry, 
+            output_folder_entry, 
+            api_key_entry, 
+            profile_entry, 
+            model_var, 
+            mapping_text
+        ),
+        width=15,
+        height=2
+    )
+    save_button.pack(side=tk.LEFT, padx=10)
 
     # Translate button
-    translate_button = tk.Button(root, text="Translate", command=lambda: threading.Thread(target=translate_file_thread, args=(api_key_entry.get(), input_file_entry.get(), output_folder_entry.get(), translate_button, profile_entry.get(), api_var.get())).start())
-    translate_button.grid(row=7, column=1, padx=5, pady=10, sticky="e")
+    translate_button = tk.Button(
+        button_frame, 
+        text="Translate", 
+        command=lambda: threading.Thread(
+            target=translate_file_thread, 
+            args=(
+                api_key_entry.get(), 
+                input_file_entry.get(), 
+                output_folder_entry.get(), 
+                translate_button, 
+                profile_entry.get(), 
+                api_var.get()
+            )
+        ).start(),
+        width=15,
+        height=2
+    )
+    translate_button.pack(side=tk.RIGHT, padx=10)
 
-    # Tải cài đặt khi khởi động
-    load_settings_from_file()
-    if custom_settings:
-        model_var.set(custom_settings.get("model", ""))
-        mapping_text.delete("1.0", tk.END)
-        for key, value in custom_settings.get("mapping", {}).items():
-            mapping_text.insert(tk.END, f"{key}:{value}\n")
-        api_key_entry.insert(0, custom_settings.get("api_key", ""))
-        profile_entry.insert(0, custom_settings.get("profile_path", ""))
+    # Tải thiết lập khi khởi động
+    if load_settings_from_file():
+        if "api_type" in custom_settings:
+            api_var.set(custom_settings.get("api_type", ""))
+            # Trigger the API field update
+            update_api_fields()
+            
+        if "input_path" in custom_settings:
+            input_file_entry.insert(0, custom_settings.get("input_path", ""))
+            
+        if "output_folder" in custom_settings:
+            output_folder_entry.insert(0, custom_settings.get("output_folder", ""))
+            
+        if "model" in custom_settings:
+            model_var.set(custom_settings.get("model", ""))
+            
+        if "mapping" in custom_settings:
+            mapping_text.delete("1.0", tk.END)
+            for key, value in custom_settings.get("mapping", {}).items():
+                mapping_text.insert(tk.END, f"{key}:{value}\n")
+                
+        if "api_key" in custom_settings:
+            api_key_entry.insert(0, custom_settings.get("api_key", ""))
+            
+        if "profile_path" in custom_settings:
+            profile_entry.insert(0, custom_settings.get("profile_path", ""))
 
     root.mainloop()
-
 if __name__ == "__main__":
     main()
