@@ -179,7 +179,7 @@ def translate_single_file(api_key, input_file, output_folder, profile_path, api_
 
         with open(input_file, "r", encoding="utf-8") as f:
             content = f.read()
-        prompt = f"Translate the following text to {target_lang}:\n\n{content}"
+        prompt = f"{target_lang}:\n\n{content}"
         
         if custom_settings.get("prompt"):
             prompt = custom_settings["prompt"].replace("{content}", content).replace("{target_lang}", target_lang)
@@ -265,7 +265,7 @@ def translate_single_file(api_key, input_file, output_folder, profile_path, api_
             raise Exception("Invalid API type selected.")
 
         output_file = os.path.join(output_folder, file_name)
-        output_file = output_file.replace(".srt", f"_{target_lang}.srt")
+        output_file = output_file.replace(".srt", f" Copy.srt")
         with open(output_file, "w", encoding="utf-8") as f:
             f.write(translated_text)
 
