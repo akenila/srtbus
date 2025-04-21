@@ -97,35 +97,35 @@ def load_settings_from_file():
         messagebox.showerror("Error", f"Failed to load settings: {e}")
 
 # Hàm xử lý nội dung file output giống SoDong.py
-def process_output_file(output_path):
-    try:
-        # Đọc nội dung file output
-        with open(output_path, 'r', encoding='utf-8') as f:
-            content_output = f.read()
+# def process_output_file(output_path):
+#     try:
+#         # Đọc nội dung file output
+#         with open(output_path, 'r', encoding='utf-8') as f:
+#             content_output = f.read()
 
-        # Xóa ký tự không mong muốn
-        pattern_remove = r'[\[\]「」【】|│》《『⌈√←™˙\*゜・·･⭑.।০、∴∵¨ひ✓€८キ#♡♥★☆$Θ®Ⓡ◎④③②①△▲◆▶�☑■●•১הוהוו〝`´י’‘~_“”"!]+'
-        content_output = re.sub(pattern_remove, '', content_output)
+#         # Xóa ký tự không mong muốn
+#         pattern_remove = r'[\[\]「」【】|│》《『⌈√←™˙\*゜・·･⭑.।০、∴∵¨ひ✓€८キ#♡♥★☆$Θ®Ⓡ◎④③②①△▲◆▶�☑■●•১הוהוו〝`´י’‘~_“”"!]+'
+#         content_output = re.sub(pattern_remove, '', content_output)
 
-        # Cắt bỏ phần thừa bên trên hoặc dưới của file output
-        pattern_block = re.compile(
-            r'(\d+\s*\n'                           # Số thứ tự
-            r'\d{2}:\d{2}:\d{2},\d{3}\s-->\s'   # Thời gian bắt đầu
-            r'\d{2}:\d{2}:\d{2},\d{3}\s*\n'     # Thời gian kết thúc
-            r'(?:.*(?:\n|$))+?)',                    # Nội dung (có thể nhiều dòng)
-            re.MULTILINE
-        )
-        match_out = pattern_block.search(content_output)
-        if match_out:
-            matches_out = list(pattern_block.finditer(content_output))
-            content_output = content_output[matches_out[0].start():matches_out[-1].end()]
+#         # Cắt bỏ phần thừa bên trên hoặc dưới của file output
+#         pattern_block = re.compile(
+#             r'(\d+\s*\n'                           # Số thứ tự
+#             r'\d{2}:\d{2}:\d{2},\d{3}\s-->\s'   # Thời gian bắt đầu
+#             r'\d{2}:\d{2}:\d{2},\d{3}\s*\n'     # Thời gian kết thúc
+#             r'(?:.*(?:\n|$))+?)',                    # Nội dung (có thể nhiều dòng)
+#             re.MULTILINE
+#         )
+#         match_out = pattern_block.search(content_output)
+#         if match_out:
+#             matches_out = list(pattern_block.finditer(content_output))
+#             content_output = content_output[matches_out[0].start():matches_out[-1].end()]
 
-        # Lưu lại file output sau khi làm sạch
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(content_output)
+#         # Lưu lại file output sau khi làm sạch
+#         with open(output_path, 'w', encoding='utf-8') as f:
+#             f.write(content_output)
 
-    except Exception as e:
-        print(f"Error processing output file: {e}")
+#     except Exception as e:
+#         print(f"Error processing output file: {e}")
 
 # Hàm dịch file (chạy trong luồng riêng)
 def translate_file_thread(api_key, input_path, output_folder, translate_button, profile_path, api_type):
@@ -167,8 +167,155 @@ def translate_file_thread(api_key, input_path, output_folder, translate_button, 
         translate_button.config(text="Translate")
         translate_button.config(state="normal")
 
+def parse_srt_from_content(content):
+    """Parse SRT content to extract subtitle components"""
+    pattern = re.compile(
+        r'(\d+)\s*\n'                           # Subtitle number
+        r'(\d{2}:\d{2}:\d{2},\d{3})\s-->\s'     # Start time
+        r'(\d{2}:\d{2}:\d{2},\d{3})\s*\n'       # End time
+        r'((?:.*(?:\n|$))+?)'                   # Content (possibly multi-line)
+        r'(?=\n\d+\s*\n|\Z)',                   # End of block (next subtitle or end of file)
+        re.MULTILINE
+    )
+    
+    subtitles = []
+    for match in pattern.finditer(content):
+        index = match.group(1)
+        start = match.group(2)
+        end = match.group(3)
+        text = match.group(4).strip()
+        subtitles.append((index, start, end, text))
+    return subtitles
+
+def process_output_file(output_path, original_path=None, retry_count=0, max_retries=6):
+
+    try:
+        # Create log file if it doesn't exist
+        log_file = "translation_log.txt"
+        if not os.path.exists(log_file):
+            with open(log_file, 'a', encoding='utf-8') as f:
+                f.write("Translation log started...\n\n")
+        
+        # Log processing start
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(f"Processing file: {output_path}\n")
+            
+        # Read the output file content
+        with open(output_path, 'r', encoding='utf-8') as f:
+            content_output = f.read()
+
+        # Remove unwanted characters
+        pattern_remove = r'[\[\]「」【】|│》《『⌈√←™˙\*゜・·･⭑.。০、∴∵¨ひ✓€८キ#♡♥★☆$Θ®Ⓡ◎④③②①△▲◆▶�☑■●•১הוהוו〝`´י''~_"""!]+'
+        content_output = re.sub(pattern_remove, '', content_output)
+            
+        # Trim excess content (keep only valid SRT blocks)
+        pattern_block = re.compile(
+            r'(\d+\s*\n'                           # Subtitle number
+            r'\d{2}:\d{2}:\d{2},\d{3}\s-->\s'      # Start time
+            r'\d{2}:\d{2}:\d{2},\d{3}\s*\n'        # End time
+            r'(?:.*(?:\n|$))+?)',                  # Content (possibly multi-line)
+            re.MULTILINE
+        )
+        
+        # Find all subtitle blocks
+        match_out = pattern_block.search(content_output)
+        if match_out:
+            matches_out = list(pattern_block.finditer(content_output))
+            content_output = content_output[matches_out[0].start():matches_out[-1].end()]
+        
+        # Count Chinese characters after cleaning
+        count_chinese = len(re.findall(r'[\u4e00-\u9fff]', content_output))
+        
+        # Count parentheses pairs after cleaning
+        matches_parentheses = re.findall(r'\([^)]*\)', content_output)
+        count_parentheses = len(matches_parentheses)
+        
+        # Log the statistics
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(f"- Chinese characters: {count_chinese}\n")
+            f.write(f"- Parentheses pairs: {count_parentheses}\n")
+        
+        print(f"Processed file: {output_path}")
+        print(f"- Chinese characters: {count_chinese}")
+        print(f"- Parentheses pairs: {count_parentheses}")
+        
+        # Parse the cleaned content
+        subtitles_target = parse_srt_from_content(content_output)
+        
+        # Check issues and determine if retry is needed
+        needs_retry = False
+        retry_reason = ""
+        
+        # If we have an original file to compare with
+        if original_path and os.path.exists(original_path):
+            with open(original_path, 'r', encoding='utf-8') as f:
+                content_original = f.read()
+                
+            # Clean the original content too
+            content_original = re.sub(pattern_remove, '', content_original)
+            match_orig = pattern_block.search(content_original)
+            if match_orig:
+                matches_orig = list(pattern_block.finditer(content_original))
+                content_original = content_original[matches_orig[0].start():matches_orig[-1].end()]
+                
+            # Parse the original content
+            subtitles_original = parse_srt_from_content(content_original)
+            
+            # Check 1: Line count mismatch
+            if len(subtitles_original) != len(subtitles_target):
+                needs_retry = True
+                retry_reason = f"Line count mismatch: original={len(subtitles_original)}, translated={len(subtitles_target)}"
+                with open(log_file, 'a', encoding='utf-8') as f:
+                    f.write(f"- {retry_reason}\n")
+        
+        # Check 2: Too many Chinese characters
+        if count_chinese > 30:
+            needs_retry = True
+            retry_reason = f"Too many Chinese characters: {count_chinese} (limit: 30)"
+            with open(log_file, 'a', encoding='utf-8') as f:
+                f.write(f"- {retry_reason}\n")
+        
+        # Check 3: Too many parentheses
+        if count_parentheses > 20:
+            needs_retry = True
+            retry_reason = f"Too many parentheses pairs: {count_parentheses} (limit: 20)"
+            with open(log_file, 'a', encoding='utf-8') as f:
+                f.write(f"- {retry_reason}\n")
+        
+        # If retry is needed and we haven't reached max retries
+        if needs_retry:
+            if retry_count < max_retries:
+                with open(log_file, 'a', encoding='utf-8') as f:
+                    f.write(f"- Needs retry ({retry_count + 1}/{max_retries}): {retry_reason}\n\n")
+                return False, True, retry_reason, retry_reason
+            else:
+                with open(log_file, 'a', encoding='utf-8') as f:
+                    f.write(f"- Maximum retries reached. Last issue: {retry_reason}\n\n")
+                return False, False, f"Maximum retries reached. Last issue: {retry_reason}", retry_reason
+        
+        # If no retry needed, save the formatted content
+        with open(output_path, 'w', encoding='utf-8') as f:
+            formatted_content = ''
+            for sub in subtitles_target:
+                formatted_content += f"{sub[0]}\n{sub[1]} --> {sub[2]}\n{sub[3]}\n\n"
+            f.write(formatted_content)
+        
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write("- File processed successfully\n\n")
+        
+        return True, False, "File processed successfully", None
+            
+    except Exception as e:
+        print(f"Error processing output file: {e}")
+        import traceback
+        traceback.print_exc()
+        with open("translation_log.txt", 'a', encoding='utf-8') as f:
+            f.write(f"- Error: {str(e)}\n\n")
+        return False, False, f"Error: {str(e)}", str(e)
+# Function to translate file
+
 # Hàm dịch một file đơn lẻ
-def translate_single_file(api_key, input_file, output_folder, profile_path, api_type):
+def translate_single_file(api_key, input_file, output_folder, profile_path, api_type, retry_count=0, max_retries=6):
     try:
         file_name = os.path.basename(input_file)
         target_lang = "en"  # Default language
@@ -270,9 +417,16 @@ def translate_single_file(api_key, input_file, output_folder, profile_path, api_
             f.write(translated_text)
 
         # Xử lý nội dung file output
-        process_output_file(output_file)
+        success, needs_retry, message, retry_reason = process_output_file(output_file, input_file, retry_count, max_retries)
         
-        return output_file
+        if needs_retry and retry_count < max_retries:
+            # Wait a moment before retrying
+            time.sleep(3)
+            # Recursive call for retry
+            return translate_single_file(api_key, input_file, output_folder, profile_path, api_type, retry_count + 1)
+        else:
+            return output_file
+        
 
     except Exception as e:
         raise Exception(f"Failed to translate {os.path.basename(input_file)}: {e}")
@@ -378,7 +532,7 @@ def main():
 
     # Model selection
     tk.Label(root, text="Select Model:").grid(row=4, column=0, padx=5, pady=5, sticky="w")
-    model_var = ttk.Combobox(root, width=50, values=["gemini-2.5-pro","gemini-2.0-flash", "gemini-2.0-flash-thinking", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-2.0-flash-thinking-exp-1219", "gemini-2.5-pro-preview-03-25"])
+    model_var = ttk.Combobox(root, width=50, values=["gemini-2.5-pro","gemini-2.0-flash", "gemini-2.0-flash-thinking", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-2.0-flash-thinking-exp-01-21", "gemini-2.5-pro-preview-03-25"])
     model_var.grid(row=4, column=1, padx=5, pady=5)
 
     # Custom mapping
