@@ -2,13 +2,13 @@ def split_chrome_profile_path(full_path):
     if not full_path:
         return None, None
         
-    user_data_index = full_path.find("User Data")
+    user_data_index = full_path.find("profile")
     if user_data_index == -1:
         return full_path, "Default"
     
-    user_data_dir = full_path[:user_data_index + len("User Data")]
+    user_data_dir = full_path[:user_data_index + len("profile")]
     
-    remaining = full_path[user_data_index + len("User Data"):]
+    remaining = full_path[user_data_index + len("profile"):]
     if remaining.startswith("\\") or remaining.startswith("/"):
         remaining = remaining[1:]
     
@@ -364,7 +364,7 @@ def translate_single_file(api_key, input_file, output_folder, profile_path, api_
                 chrome_options = Options()
                 chrome_options.add_argument(f"user-data-dir={user_data_dir}")
                 chrome_options.add_argument(f"--profile-directory={profile_name}")
-                # chrome_options.add_argument("--headless")
+                chrome_options.add_argument("--headless")
                 chrome_options.binary_location = "./ChromePortable/App/Chrome-bin/chrome.exe"
                 
                 service = Service(ChromeDriverManager(driver_version="127.0.6533.120").install())
