@@ -386,7 +386,7 @@ def translate_single_file(api_key, input_file, output_folder, profile_path, api_
                 driver.quit()
                 
                 if not secure_1psid or not secure_1psidts:
-                    raise Exception("Required cookies not found. Please check your Chrome profile.")
+                    raise Exception(f"Required cookies not found. Please check your Chrome profile., {secure_1psid}, {secure_1psidts}")
                 
                 # Use the async function with asyncio
                 
