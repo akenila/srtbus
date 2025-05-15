@@ -374,7 +374,6 @@ def translate_single_file(api_key, input_file, output_folder, profile_path, api_
                 time.sleep(10)  # Wait for the page to load
                 
                 cookies = driver.get_cookies()
-                open("cookies.txt", "w", encoding="utf-8").write(str(cookies))
                 secure_1psid = None
                 secure_1psidts = None
                 
