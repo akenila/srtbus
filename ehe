@@ -364,7 +364,7 @@ def translate_single_file(api_key, input_file, output_folder, profile_path, api_
                 chrome_options = Options()
                 chrome_options.add_argument(f"user-data-dir={user_data_dir}")
                 chrome_options.add_argument(f"--profile-directory={profile_name}")
-                chrome_options.add_argument("--headless")
+                # chrome_options.add_argument("--headless")
                 chrome_options.binary_location = "./ChromePortable/App/Chrome-bin/chrome.exe"
                 
                 service = Service(ChromeDriverManager(driver_version="127.0.6533.120").install())
