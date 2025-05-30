@@ -1,8 +1,27 @@
+def end_chrome_portable(chrome_portable_path):
+    """End all ChromePortable processes matching the specified path."""
+    chrome_portable_path = os.path.normpath(chrome_portable_path.lower())
+    terminated_count = 0
+    
+    for proc in psutil.process_iter(['pid', 'name', 'exe']):
+        try:
+            # Check if it's a Chrome process
+            if proc.info['name'] and 'chrome' in proc.info['name'].lower():
+                # Get the full path of the executable
+                if proc.info['exe'] and os.path.normpath(proc.info['exe'].lower()).startswith(chrome_portable_path):
+                    print(f"Terminating ChromePortable process: {proc.info['pid']} - {proc.info['exe']}")
+                    proc.terminate()
+                    terminated_count += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+    
+    print(f"Terminated {terminated_count} ChromePortable processes")
+
 def split_chrome_profile_path(full_path):
     if not full_path:
         return None, None
         
-    user_data_index = full_path.find("profile")
+    user_data_index = full_path.find("User Data")
     if user_data_index == -1:
         return full_path, "Default"
     
@@ -307,13 +326,29 @@ def process_output_file(output_path, original_path=None, retry_count=0, max_retr
             
     except Exception as e:
         print(f"Error processing output file: {e}")
-        import traceback
         traceback.print_exc()
         with open("translation_log.txt", 'a', encoding='utf-8') as f:
             f.write(f"- Error: {str(e)}\n\n")
         return False, False, f"Error: {str(e)}", str(e)
 # Function to translate file
-
+def end_chrome_portable(chrome_portable_path):
+    """End all ChromePortable processes matching the specified path."""
+    chrome_portable_path = os.path.normpath(chrome_portable_path.lower())
+    terminated_count = 0
+    
+    for proc in psutil.process_iter(['pid', 'name', 'exe']):
+        try:
+            # Check if it's a Chrome process
+            if proc.info['name'] and 'chrome' in proc.info['name'].lower():
+                # Get the full path of the executable
+                if proc.info['exe'] and os.path.normpath(proc.info['exe'].lower()).startswith(chrome_portable_path):
+                    print(f"Terminating ChromePortable process: {proc.info['pid']} - {proc.info['exe']}")
+                    proc.terminate()
+                    terminated_count += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+    
+    print(f"Terminated {terminated_count} ChromePortable processes")
 # Hàm dịch một file đơn lẻ
 def translate_single_file(api_key, input_file, output_folder, profile_path, api_type, retry_count=0, max_retries=6):
     try:
@@ -367,7 +402,7 @@ def translate_single_file(api_key, input_file, output_folder, profile_path, api_
                 chrome_options.add_argument("--headless")
                 chrome_options.binary_location = "./ChromePortable/App/Chrome-bin/chrome.exe"
                 
-                service = Service(ChromeDriverManager(driver_version="127.0.6533.120").install())
+                service = Service(ChromeDriverManager().install())
                 driver = webdriver.Chrome(service=service, options=chrome_options)
                 
                 driver.get("https://gemini.google.com")
@@ -386,7 +421,7 @@ def translate_single_file(api_key, input_file, output_folder, profile_path, api_
                 driver.quit()
                 
                 if not secure_1psid or not secure_1psidts:
-                    raise Exception(f"Required cookies not found. Please check your Chrome profile., {secure_1psid}, {secure_1psidts}")
+                    raise Exception("Required cookies not found. Please check your Chrome profile.")
                 
                 # Use the async function with asyncio
                 
@@ -408,6 +443,16 @@ def translate_single_file(api_key, input_file, output_folder, profile_path, api_
                 
             except Exception as e:
                 raise Exception(f"Gemini API error: {str(e)}")
+
+        elif api_type == "ChatGPT":
+            # Use UnlimitedGPT for ChatGPT API
+            try:
+                api = ChatGPT(chrome_profile=profile_path, session_token="")
+                message = api.send_message(prompt, input_mode="INSTANT", input_delay=0.1, close_after_response=True)
+                translated_text = message.response
+                end_chrome_portable("./ChromePortable/App/Chrome-bin/chrome.exe")
+            except Exception as e:
+                raise Exception(f"ChatGPT API error: {str(e)}")
 
         else:
             raise Exception("Invalid API type selected.")
@@ -487,7 +532,7 @@ def main():
 
     # API selection
     tk.Label(root, text="Select API:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-    api_var = ttk.Combobox(root, values=["AI Studio", "Gemini"])
+    api_var = ttk.Combobox(root, values=["AI Studio", "Gemini", "ChatGPT"])
     api_var.grid(row=0, column=1, padx=5, pady=5)
 
     # Input file or folder
@@ -516,7 +561,7 @@ def main():
     profile_button = tk.Button(root, text="Browse", command=lambda: select_profile_file(profile_entry))
 
     def update_api_fields(event=None):
-        if api_var.get() == "Gemini":
+        if api_var.get() == "Gemini" or api_var.get() == "ChatGPT":
             api_key_label.grid_remove()
             api_key_entry.grid_remove()
             profile_label.grid(row=3, column=0, padx=5, pady=5, sticky="w")
