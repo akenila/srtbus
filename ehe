@@ -21,7 +21,7 @@ def split_chrome_profile_path(full_path):
     if not full_path:
         return None, None
         
-    user_data_index = full_path.find("User Data")
+    user_data_index = full_path.find("profile")
     if user_data_index == -1:
         return full_path, "Default"
     
@@ -147,7 +147,7 @@ def load_settings_from_file():
 #         print(f"Error processing output file: {e}")
 
 # Hàm dịch file (chạy trong luồng riêng)
-def translate_file_thread(api_key, input_path, output_folder, translate_button, profile_path, api_type):
+def translate_file_thread(api_key, input_path, output_folder, translate_button, profile_path, api_type, perplexity_category=None, cookies=None, model=None):
     try:
         translate_button.config(text="Translating...")
         translate_button.config(state="disabled")
@@ -172,13 +172,14 @@ def translate_file_thread(api_key, input_path, output_folder, translate_button, 
                 root.update_idletasks()
                 
                 # Dịch từng file
-                translate_single_file(api_key, input_file, output_folder, profile_path, api_type)
+
+                translate_single_file(api_key, input_file, output_folder, profile_path, api_type, perplexity_category = perplexity_category, cookies = cookies, model=model)
                 processed_files += 1
                 
             messagebox.showinfo("Success", f"Translation completed for {processed_files} files.")
         else:
             # Xử lý khi đầu vào là file đơn
-            translate_single_file(api_key, input_path, output_folder, profile_path, api_type)
+            translate_single_file(api_key, input_path, output_folder, profile_path, api_type, perplexity_category = perplexity_category, cookies = cookies, model=model)
             
     except Exception as e:
         messagebox.showerror("Error", f"Failed to translate: {e}")
@@ -350,7 +351,7 @@ def end_chrome_portable(chrome_portable_path):
     
     print(f"Terminated {terminated_count} ChromePortable processes")
 # Hàm dịch một file đơn lẻ
-def translate_single_file(api_key, input_file, output_folder, profile_path, api_type, retry_count=0, max_retries=6):
+def translate_single_file(api_key, input_file, output_folder, profile_path, api_type, retry_count=0, max_retries=6, perplexity_category=None, cookies=None, model=None):
     try:
         file_name = os.path.basename(input_file)
         target_lang = "en"  # Default language
@@ -399,10 +400,9 @@ def translate_single_file(api_key, input_file, output_folder, profile_path, api_
                 chrome_options = Options()
                 chrome_options.add_argument(f"user-data-dir={user_data_dir}")
                 chrome_options.add_argument(f"--profile-directory={profile_name}")
-                chrome_options.add_argument("--headless")
                 chrome_options.binary_location = "./ChromePortable/App/Chrome-bin/chrome.exe"
                 
-                service = Service(ChromeDriverManager().install())
+                service = Service(ChromeDriverManager(driver_version="127.0.6533.120").install())
                 driver = webdriver.Chrome(service=service, options=chrome_options)
                 
                 driver.get("https://gemini.google.com")
@@ -426,11 +426,13 @@ def translate_single_file(api_key, input_file, output_folder, profile_path, api_
                 # Use the async function with asyncio
                 
                 # Create an async function to use GeminiClient
+                if model is None:
+                    model = custom_settings.get("model", "gemini-1.5-flash")
                 async def translate_with_gemini():
                     try:
                         client = GeminiClient(secure_1psid, secure_1psidts)
                         await client.init(timeout=400)
-                        response = await client.generate_content(prompt=prompt, model=custom_settings['model'])
+                        response = await client.generate_content(prompt=prompt, model=model )
                         translated_text = response.text
                         await client.close()
                         return translated_text
@@ -453,6 +455,36 @@ def translate_single_file(api_key, input_file, output_folder, profile_path, api_
                 end_chrome_portable("./ChromePortable/App/Chrome-bin/chrome.exe")
             except Exception as e:
                 raise Exception(f"ChatGPT API error: {str(e)}")
+            
+        elif api_type == "Perplexity":
+            cookies_json = cookies
+            if model is None:
+                model = custom_settings.get("model", None)
+            if perplexity_category is None:
+                perplexity_category = custom_settings.get("perplexity_category", "auto")
+            if not cookies_json:
+                raise Exception("Perplexity cookies are required.")
+            
+            # Try to parse the cookies as JSON
+            try:
+                perplexity_cookies = {cookie['name']: cookie['value'] for cookie in json.loads(cookies_json)}
+            except json.JSONDecodeError:
+                # If not valid JSON, try to parse as key-value pairs
+                perplexity_cookies = {}
+                for line in cookies_json.split('\n'):
+                    if ':' in line:
+                        key, value = line.split(':', 1)
+                        perplexity_cookies[key.strip()] = value.strip()
+            
+            perplexity_cli = perplexity.Client(perplexity_cookies)
+            print(custom_settings["perplexity_category"], custom_settings["model"])
+            if custom_settings["model"]==None:
+                resp = perplexity_cli.search(prompt, mode=perplexity_category, sources=['web'],language='en-US', follow_up=None, incognito=False)
+            else:
+                resp = perplexity_cli.search(prompt, mode=perplexity_category, sources=['web'],language='en-US', follow_up=None, incognito=False, model=model)
+            for i in resp["text"]:
+                if i["step_type"] == "FINAL":
+                    translated_text = json.loads(i["content"]["answer"])["answer"]
 
         else:
             raise Exception("Invalid API type selected.")
@@ -532,7 +564,7 @@ def main():
 
     # API selection
     tk.Label(root, text="Select API:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-    api_var = ttk.Combobox(root, values=["AI Studio", "Gemini", "ChatGPT"])
+    api_var = ttk.Combobox(root, values=["AI Studio", "Gemini", "ChatGPT", "Perplexity"])
     api_var.grid(row=0, column=1, padx=5, pady=5)
 
     # Input file or folder
@@ -560,37 +592,120 @@ def main():
     profile_entry = tk.Entry(root, width=50)
     profile_button = tk.Button(root, text="Browse", command=lambda: select_profile_file(profile_entry))
 
+    cookies_label = tk.Label(root, text="Perplexity Cookies:")
+    cookies_text = tk.Text(root, height=4, width=50)
+
+    # Model selection
+    tk.Label(root, text="Select Model:").grid(row=4, column=0, padx=5, pady=5, sticky="w")
+    model_var = ttk.Combobox(root, width=50)
+    model_var.grid(row=4, column=1, padx=5, pady=5)
+
+    # Perplexity category selection (initially hidden)
+    perplexity_category_label = tk.Label(root, text="Perplexity Category:")
+    perplexity_category_var = ttk.Combobox(root, width=50, 
+                                          values=["auto", "pro", "reasoning", "deep research"])
+    
+    # Define the perplexity models mapping
+    perplexity_models = {
+        'auto': ['None'],
+        'pro': ['None', 'sonar', 'gpt-4.5', 'gpt-4o', 'claude 3.7 sonnet', 'gemini 2.0 flash', 'grok-2'],
+        'reasoning': ['None', 'r1', 'o3-mini', 'claude 3.7 sonnet'],
+        'deep research': ['None']
+    }
+    
+    def update_perplexity_models(event=None):
+        """Update the model dropdown based on the selected Perplexity category"""
+        selected_category = perplexity_category_var.get()
+        if selected_category in perplexity_models:
+            model_var.config(values=perplexity_models[selected_category])
+            model_var.current(0)
+    
+    perplexity_category_var.bind("<<ComboboxSelected>>", update_perplexity_models)
+
     def update_api_fields(event=None):
-        if api_var.get() == "Gemini" or api_var.get() == "ChatGPT":
+        """Update UI fields based on selected API"""
+        selected_api = api_var.get()
+        
+        # Handle API key and profile fields
+        if selected_api == "Gemini" or selected_api == "ChatGPT":
             api_key_label.grid_remove()
             api_key_entry.grid_remove()
+            cookies_label.grid_remove()
+            cookies_text.grid_remove()
             profile_label.grid(row=3, column=0, padx=5, pady=5, sticky="w")
             profile_entry.grid(row=3, column=1, padx=5, pady=5)
             profile_button.grid(row=3, column=2, padx=5, pady=5)
+        elif selected_api == "Perplexity":
+            # For Perplexity, show cookies input instead of profile path or API key
+            api_key_label.grid_remove()
+            api_key_entry.grid_remove()
+            profile_label.grid_remove()
+            profile_entry.grid_remove()
+            profile_button.grid_remove()
+            cookies_label.grid(row=3, column=0, padx=5, pady=5, sticky="w")
+            cookies_text.grid(row=3, column=1, padx=5, pady=5, columnspan=2, sticky="we")
         else:
             profile_label.grid_remove()
             profile_entry.grid_remove()
             profile_button.grid_remove()
             api_key_label.grid(row=3, column=0, padx=5, pady=5, sticky="w")
             api_key_entry.grid(row=3, column=1, padx=5, pady=5)
+        
+        # Update model dropdown based on API
+        if selected_api == "ChatGPT":
+            model_var.config(values=["default"])
+            model_var.current(0)
+            perplexity_category_label.grid_remove()
+            perplexity_category_var.grid_remove()
+        elif selected_api == "Gemini":
+            model_var.config(values=["unspecified", "gemini-2.0-flash", "gemini-2.0-flash-thinking", 
+                                     "gemini-2.5-flash", "gemini-2.5-pro"])
+            if model_var.get() not in model_var["values"]:
+                model_var.current(0)
+            perplexity_category_label.grid_remove()
+            perplexity_category_var.grid_remove()
+        elif selected_api == "AI Studio":
+            model_var.config(values=["gemini-1.5-flash", "gemini-2.0-flash-thinking-exp-01-21", 
+                                     "gemini-2.5-pro-preview-03-25"])
+            if model_var.get() not in model_var["values"]:
+                model_var.current(0)
+            perplexity_category_label.grid_remove()
+            perplexity_category_var.grid_remove()
+        elif selected_api == "Perplexity":
+            # Show Perplexity category dropdown
+            perplexity_category_label.grid(row=5, column=0, padx=5, pady=5, sticky="w")
+            perplexity_category_var.grid(row=5, column=1, padx=5, pady=5)
+            if not perplexity_category_var.get():
+                perplexity_category_var.current(0)
+            # Initial update of models based on default category
+            update_perplexity_models()
+            
+            # Move mapping text down one row when Perplexity is selected
+            mapping_label.grid(row=6, column=0, padx=5, pady=5, sticky="nw")
+            mapping_text.grid(row=6, column=1, padx=5, pady=5)
+            button_frame.grid(row=8, column=0, columnspan=3, padx=5, pady=10)
+        else:
+            perplexity_category_label.grid_remove()
+            perplexity_category_var.grid_remove()
+            
+            # Move mapping text back to original position for other APIs
+            mapping_label.grid(row=5, column=0, padx=5, pady=5, sticky="nw")
+            mapping_text.grid(row=5, column=1, padx=5, pady=5)
+            button_frame.grid(row=7, column=0, columnspan=3, padx=5, pady=10)
 
     api_var.bind("<<ComboboxSelected>>", update_api_fields)
 
-    # Model selection
-    tk.Label(root, text="Select Model:").grid(row=4, column=0, padx=5, pady=5, sticky="w")
-    model_var = ttk.Combobox(root, width=50, values=["gemini-2.5-pro","gemini-2.0-flash", "gemini-2.0-flash-thinking", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-2.0-flash-thinking-exp-01-21", "gemini-2.5-pro-preview-03-25"])
-    model_var.grid(row=4, column=1, padx=5, pady=5)
-
     # Custom mapping
-    tk.Label(root, text="Custom Language Mapping (e.g., rvTBN:es):").grid(row=5, column=0, padx=5, pady=5, sticky="nw")
+    mapping_label = tk.Label(root, text="Custom Language Mapping (e.g., rvTBN:es):")
+    mapping_label.grid(row=5, column=0, padx=5, pady=5, sticky="nw")
     mapping_text = tk.Text(root, height=5, width=50)
     mapping_text.grid(row=5, column=1, padx=5, pady=5)
 
-    # Tạo frame ở cuối cho các nút
+    # Button frame
     button_frame = tk.Frame(root)
     button_frame.grid(row=7, column=0, columnspan=3, padx=5, pady=10)
     
-    # Nút lưu thiết lập
+    # Save settings button
     save_button = tk.Button(
         button_frame, 
         text="Save All Settings", 
@@ -601,7 +716,8 @@ def main():
             api_key_entry, 
             profile_entry, 
             model_var, 
-            mapping_text
+            mapping_text,
+            perplexity_category_var if api_var.get() == "Perplexity" else None
         ),
         width=15,
         height=2
@@ -620,7 +736,10 @@ def main():
                 output_folder_entry.get(), 
                 translate_button, 
                 profile_entry.get(), 
-                api_var.get()
+                api_var.get(),
+                perplexity_category_var.get() if api_var.get() == "Perplexity" else None,
+                cookies_text.get("1.0", tk.END).strip() if api_var.get() == "Perplexity" else None,
+                model_var.get()
             )
         ).start(),
         width=15,
@@ -628,12 +747,53 @@ def main():
     )
     translate_button.pack(side=tk.RIGHT, padx=10)
 
-    # Tải thiết lập khi khởi động
+    # Update the save_all_settings function to include Perplexity category
+    def save_all_settings(api_var, input_file_entry, output_folder_entry, api_key_entry, 
+                         profile_entry, model_var, mapping_text, perplexity_category_var=None):
+        """Save all settings from UI into JSON file"""
+        try:
+            global custom_settings
+            
+            # Get API type
+            api_type = api_var.get()
+            
+            # Process mapping text
+            mapping = {}
+            for line in mapping_text.get("1.0", tk.END).splitlines():
+                if ":" in line:
+                    key, value = line.split(":", 1)
+                    mapping[key.strip()] = value.strip()
+            
+            # Save all settings in dictionary
+            custom_settings = {
+                "api_type": api_type,
+                "input_path": input_file_entry.get(),
+                "output_folder": output_folder_entry.get(),
+                "api_key": api_key_entry.get(),
+                "profile_path": profile_entry.get(),
+                "model": model_var.get(),
+                "mapping": mapping
+            }
+            
+            # Add Perplexity category if applicable
+            if api_type == "Perplexity" and perplexity_category_var:
+                custom_settings["perplexity_category"] = perplexity_category_var.get()
+                custom_settings["perplexity_cookies"] = cookies_text.get("1.0", tk.END).strip()
+            
+            # Save to file
+            with open("subsrt_settings.json", "w", encoding="utf-8") as f:
+                json.dump(custom_settings, f, ensure_ascii=False, indent=4)
+                
+            messagebox.showinfo("Success", "All settings saved successfully!")
+            return True
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save settings: {e}")
+            return False
+
+    # Load settings when starting
     if load_settings_from_file():
         if "api_type" in custom_settings:
             api_var.set(custom_settings.get("api_type", ""))
-            # Trigger the API field update
-            update_api_fields()
             
         if "input_path" in custom_settings:
             input_file_entry.insert(0, custom_settings.get("input_path", ""))
@@ -654,7 +814,17 @@ def main():
             
         if "profile_path" in custom_settings:
             profile_entry.insert(0, custom_settings.get("profile_path", ""))
+            
+        if "perplexity_category" in custom_settings:
+            perplexity_category_var.set(custom_settings.get("perplexity_category", ""))
+        if "perplexity_cookies" in custom_settings:
+            cookies_text.delete("1.0", tk.END)
+            cookies_text.insert(tk.END, custom_settings.get("perplexity_cookies", ""))
+        
+        # Trigger the API field update to configure the UI properly
+        update_api_fields()
 
     root.mainloop()
+
 if __name__ == "__main__":
     main()
