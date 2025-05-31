@@ -452,7 +452,8 @@ def translate_single_file(api_key, input_file, output_folder, profile_path, api_
                 api = ChatGPT(chrome_profile=profile_path, session_token="")
                 message = api.send_message(prompt, input_mode="INSTANT", input_delay=0.1, close_after_response=True)
                 translated_text = message.response
-                end_chrome_portable("./ChromePortable/App/Chrome-bin/chrome.exe")
+                end_chrome_portable(f"{os.getcwd()}/ChromePortable/App/Chrome-bin/chrome.exe")
+                time.sleep(2)  # Wait for Chrome to close properly
             except Exception as e:
                 raise Exception(f"ChatGPT API error: {str(e)}")
             
