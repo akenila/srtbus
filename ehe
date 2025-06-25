@@ -339,7 +339,7 @@ def extract_all_span_text(driver, timeout=120, stability_period=3, check_interva
 
 
 
-def get_ai_studio_response(prompt, model_name, profile_path=None, chrome_binary_path=None, driver=None):
+def get_ai_studio_response(prompt, model_name, profile_path=None, driver=None):
     should_quit_driver = False
     if driver is None:
         should_quit_driver = True
@@ -350,7 +350,7 @@ def get_ai_studio_response(prompt, model_name, profile_path=None, chrome_binary_
         default_chrome_binary = "./ChromePortable/App/Chrome-bin/chrome.exe"
         
         profile_path = profile_path or default_profile_path
-        chrome_binary = chrome_binary_path or default_chrome_binary
+        chrome_binary = default_chrome_binary
         
         # Tạo profile path
         user_data_dir, profile_name = split_chrome_profile_path(profile_path)
