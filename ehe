@@ -158,7 +158,7 @@ def select_model(driver, model_name=None, section_name=None):
             return
         except Exception:
             raise Exception(f"Không tìm thấy model: {model_name}")
-def send_prompt_and_extract(driver, prompt_text, max_retries=3):
+def send_prompt_and_extract(driver, prompt_text, max_retries=10):
     for attempt in range(max_retries):
         try:
             # Nhập prompt vào textarea
@@ -196,7 +196,7 @@ def send_prompt_and_extract(driver, prompt_text, max_retries=3):
     # Nếu đã thử hết số lần mà vẫn thất bại
     return f"Không thể trích xuất phản hồi sau {max_retries} lần thử", 0
 
-def extract_all_span_text(driver, timeout=120, stability_period=3, check_interval=1):
+def extract_all_span_text(driver, timeout=300, stability_period=4, check_interval=1):
     wait = WebDriverWait(driver, timeout)
     
     # Đợi cho phản hồi bắt đầu hiển thị
