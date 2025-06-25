@@ -414,16 +414,7 @@ def save_settings_to_file():
     except Exception as e:
         messagebox.showerror("Error", f"Failed to save settings: {e}")
 
-# Hàm tải cài đặt từ file JSON
-def load_settings_from_file():
-    global custom_settings
-    try:
-        with open("mapping_settings.json", "r", encoding="utf-8") as f:
-            custom_settings = json.load(f)
-    except FileNotFoundError:
-        custom_settings = {}
-    except Exception as e:
-        messagebox.showerror("Error", f"Failed to load settings: {e}")
+
 
 # Hàm xử lý nội dung file output giống SoDong.py
 # def process_output_file(output_path):
@@ -674,8 +665,6 @@ def translate_single_file(api_key, input_file, output_folder, profile_path, api_
             content = f.read()
         prompt = f"{target_lang}:\n\n{content}"
         
-        if custom_settings.get("prompt"):
-            prompt = custom_settings["prompt"].replace("{content}", content).replace("{target_lang}", target_lang)
             
         if api_type == "AI Studio":
             # AI Studio API logic
