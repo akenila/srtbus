@@ -1,3 +1,4 @@
+
 def end_chrome_portable(chrome_portable_path):
     """End all ChromePortable processes matching the specified path."""
     chrome_portable_path = os.path.normpath(chrome_portable_path.lower())
@@ -158,7 +159,7 @@ def select_model(driver, model_name=None, section_name=None):
             return
         except Exception:
             raise Exception(f"Không tìm thấy model: {model_name}")
-def send_prompt_and_extract(driver, prompt_text, max_retries=10):
+def send_prompt_and_extract(driver, prompt_text, max_retries=3):
     for attempt in range(max_retries):
         try:
             # Nhập prompt vào textarea
@@ -181,7 +182,8 @@ def send_prompt_and_extract(driver, prompt_text, max_retries=10):
             # Kiểm tra nếu cần gửi lại do lỗi
             if full_response == "ERROR_NEED_RESEND":
                 print(f"Lần thử {attempt+1} gặp lỗi, đang thử lại...")
-                time.sleep(2)  # Chờ một chút trước khi thử lại
+                driver.refresh()  # Làm mới trang để reset trạng thái
+                time.sleep(2)
                 continue
                 
             # Nếu trích xuất thành công, trả về kết quả
@@ -191,12 +193,10 @@ def send_prompt_and_extract(driver, prompt_text, max_retries=10):
             print(f"Lỗi trong lần thử {attempt+1}: {str(e)}")
             if attempt < max_retries - 1:
                 print("Đang thử lại...")
-                time.sleep(3)
     
     # Nếu đã thử hết số lần mà vẫn thất bại
     return f"Không thể trích xuất phản hồi sau {max_retries} lần thử", 0
-
-def extract_all_span_text(driver, timeout=300, stability_period=4, check_interval=1):
+def extract_all_span_text(driver, timeout=200, stability_period=3, check_interval=1):
     wait = WebDriverWait(driver, timeout)
     
     # Đợi cho phản hồi bắt đầu hiển thị
@@ -243,29 +243,63 @@ def extract_all_span_text(driver, timeout=300, stability_period=4, check_interva
         
         # Duyệt qua tất cả ms-text-chunk đã lọc
         for chunk in text_chunks:
-            # Thử với nhiều loại selector khác nhau
-            selectors = [
-                "span.ng-star-inserted",
-                "span",
-                "p span",
-                ".cmark-node span"
-            ]
+            # Tìm tất cả các thẻ p trong chunk
+            paragraphs = chunk.find_elements(By.CSS_SELECTOR, "p")
             
-            spans = []
-            for selector in selectors:
-                spans = chunk.find_elements(By.CSS_SELECTOR, selector)
-                if spans:
-                    break
+            for paragraph in paragraphs:
+                # Thử với nhiều loại selector khác nhau để tìm spans trong p
+                selectors = [
+                    "span.ng-star-inserted",
+                    "span",
+                    "ms-cmark-node span"
+                ]
+                
+                paragraph_text = ""
+                spans_in_p = []
+                
+                for selector in selectors:
+                    spans_in_p = paragraph.find_elements(By.CSS_SELECTOR, selector)
+                    if spans_in_p:
+                        break
+                
+                # Thu thập văn bản từ tất cả spans trong cùng một p
+                for span in spans_in_p:
+                    try:
+                        span_text = span.text.strip()
+                        if span_text:
+                            paragraph_text += span_text+" "
+                            current_spans_count += 1
+                    except Exception as e:
+                        pass
+                
+                # Thêm nội dung của p vào full_text (một dòng cho mỗi p)
+                if paragraph_text.strip():
+                    full_text += paragraph_text.strip() + "\n"
             
-            # Thu thập văn bản từ mỗi span
-            for span in spans:
-                try:
-                    span_text = span.text.strip()
-                    if span_text:
-                        full_text += span_text + "\n"
-                        current_spans_count += 1
-                except Exception as e:
-                    pass
+            # Nếu không tìm thấy p nào, sử dụng phương pháp cũ
+            if not paragraphs:
+                selectors = [
+                    "span.ng-star-inserted",
+                    "span",
+                    "p span",
+                    ".cmark-node span"
+                ]
+                
+                spans = []
+                for selector in selectors:
+                    spans = chunk.find_elements(By.CSS_SELECTOR, selector)
+                    if spans:
+                        break
+                
+                # Thu thập văn bản từ mỗi span
+                for span in spans:
+                    try:
+                        span_text = span.text.strip()
+                        if span_text:
+                            full_text += span_text + "\n"
+                            current_spans_count += 1
+                    except Exception as e:
+                        pass
         
         # In thông tin về số lượng spans tìm thấy
         elapsed = time.time() - start_time
@@ -334,7 +368,6 @@ def extract_all_span_text(driver, timeout=300, stability_period=4, check_interva
         print(f"Không thể lưu HTML để debug: {str(e)}")
     
     return error_msg, 0
-
 # Đợi và lấy nội dung tất cả span từ ms-text-chunk
 
 
