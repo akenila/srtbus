@@ -1,23 +1,3 @@
-
-def end_chrome_portable(chrome_portable_path):
-    """End all ChromePortable processes matching the specified path."""
-    chrome_portable_path = os.path.normpath(chrome_portable_path.lower())
-    terminated_count = 0
-    
-    for proc in psutil.process_iter(['pid', 'name', 'exe']):
-        try:
-            # Check if it's a Chrome process
-            if proc.info['name'] and 'chrome' in proc.info['name'].lower():
-                # Get the full path of the executable
-                if proc.info['exe'] and os.path.normpath(proc.info['exe'].lower()).startswith(chrome_portable_path):
-                    print(f"Terminating ChromePortable process: {proc.info['pid']} - {proc.info['exe']}")
-                    proc.terminate()
-                    terminated_count += 1
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            pass
-    
-    print(f"Terminated {terminated_count} ChromePortable processes")
-
 def split_chrome_profile_path(full_path):
     if not full_path:
         return None, None
@@ -159,6 +139,204 @@ def select_model(driver, model_name=None, section_name=None):
             return
         except Exception:
             raise Exception(f"Không tìm thấy model: {model_name}")
+def wait_for_generation_and_copy(driver, timeout=600):
+    """
+    Đợi quá trình generate hoàn thành và copy text thông qua menu
+    """
+    wait = WebDriverWait(driver, timeout)
+    start_time = time.time()
+    
+    print("Đang đợi quá trình generate hoàn thành...")
+    try:
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "ms-text-chunk")))
+        print("Đã phát hiện phản hồi, đang đợi hoàn thành...")
+    except Exception as e:
+        print(f"Không tìm thấy phản hồi: {str(e)}")
+        return "Lỗi: Không tìm thấy phản hồi", 0
+    last_content_length = 0
+    stable_count = 0
+    required_stable_checks = 5  # Số lần kiểm tra ổn định cần thiết
+    
+    while time.time() - start_time < timeout:
+        try:
+            error_message = driver.find_element(By.CSS_SELECTOR, ".model-error")
+            if "An internal error has occurred" in error_message.text:
+                print("⚠️ Phát hiện lỗi nội bộ! Cần gửi lại prompt.")
+                return "ERROR_NEED_RESEND", 0
+        except:
+            pass
+        try:
+            # Kiểm tra xem có loading indicator không
+            loading_elements = driver.find_elements(By.CSS_SELECTOR, ".loading, .generating, .thinking")
+            
+            # Lấy độ dài nội dung hiện tại để kiểm tra xem có thay đổi không
+            text_chunks = driver.find_elements(By.CSS_SELECTOR, "ms-chat-message ms-text-chunk")
+            if not text_chunks:
+                text_chunks = driver.find_elements(By.CSS_SELECTOR, "ms-text-chunk")
+                if len(text_chunks) > 1:
+                    text_chunks = text_chunks[1:]  # Bỏ qua chunk đầu tiên (input)
+            
+            current_content_length = 0
+            for chunk in text_chunks:
+                current_content_length += len(chunk.text)
+            
+            # Kiểm tra tính ổn định
+            if current_content_length == last_content_length and not loading_elements:
+                stable_count += 1
+                print(f"Nội dung ổn định lần {stable_count}/{required_stable_checks}")
+                
+                if stable_count >= required_stable_checks:
+                    print("Quá trình generate đã hoàn thành!")
+                    break
+            else:
+                stable_count = 0
+                last_content_length = current_content_length
+                if loading_elements:
+                    print("Vẫn đang generate...")
+                else:
+                    print(f"Nội dung đang thay đổi: {current_content_length} ký tự")
+            
+            time.sleep(2)  # Kiểm tra mỗi 2 giây
+            
+        except Exception as e:
+            print(f"Lỗi khi kiểm tra trạng thái: {str(e)}")
+            time.sleep(1)
+    
+    # Sau khi generate xong, nhấn vào button options (3 dấu chấm)
+    try:
+        print("Đang tìm button options...")
+        # Tìm button có class chứa "more_vert" hoặc aria-label="Open options"
+        options_button = None
+        
+        # Thử nhiều selector khác nhau
+        selectors = [
+            'button[aria-label="Open options"]',
+            'button.mat-mdc-menu-trigger',
+            'button:has(.material-symbols-outlined:contains("more_vert"))',
+            '.turn-options-button',
+            '.material-symbols-outlined:contains("more_vert")'
+        ]
+        
+        for selector in selectors:
+            try:
+                elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                if elements:
+                    # Tìm element gần nhất với response
+                    for element in elements:
+                        # Kiểm tra xem button có gần với response message không
+                        if element.is_displayed():
+                            options_button = element
+                            break
+                    if options_button:
+                        break
+            except:
+                continue
+        
+        if not options_button:
+            # Fallback: tìm theo xpath
+            try:
+                options_button = driver.find_element(By.XPATH, 
+                    '//button[contains(@class, "mat-mdc-menu-trigger")]//span[contains(@class, "material-symbols-outlined") and contains(text(), "more_vert")]/..')
+            except:
+                pass
+        
+        if not options_button:
+            return "Lỗi: Không tìm thấy button options", 0
+        
+        print("Đã tìm thấy button options, đang nhấn...")
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", options_button)
+        time.sleep(1)
+        
+        # Thử click bằng JavaScript nếu click thường không hoạt động
+        try:
+            options_button.click()
+        except:
+            driver.execute_script("arguments[0].click();", options_button)
+        
+        time.sleep(2)  # Đợi menu xuất hiện
+        
+    except Exception as e:
+        print(f"Lỗi khi nhấn button options: {str(e)}")
+        return f"Lỗi khi nhấn button options: {str(e)}", 0
+    
+    # Nhấn vào button "Copy text"
+    try:
+        print("Đang tìm button Copy text...")
+        
+        # Đợi menu xuất hiện
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".mat-mdc-menu-item")))
+        
+        # Tìm button copy text
+        copy_button = None
+        
+        # Thử nhiều cách tìm button copy
+        selectors = [
+            'button.mat-mdc-menu-item:has(.copy-rendered-button)',
+            'button.mat-mdc-menu-item:has(span:contains("Copy text"))',
+            '.mat-mdc-menu-item:has(.material-symbols-outlined:contains("content_copy"))',
+            'button[role="menuitem"]:has(span:contains("Copy text"))'
+        ]
+        
+        for selector in selectors:
+            try:
+                elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                if elements:
+                    copy_button = elements[0]
+                    break
+            except:
+                continue
+        
+        if not copy_button:
+            # Fallback: tìm theo text
+            try:
+                copy_button = driver.find_element(By.XPATH, 
+                    '//button[@role="menuitem"]//span[contains(text(), "Copy text")]/..')
+            except:
+                pass
+        
+        if not copy_button:
+            # Fallback cuối: tìm tất cả menu items và chọn cái có text "Copy"
+            menu_items = driver.find_elements(By.CSS_SELECTOR, ".mat-mdc-menu-item")
+            for item in menu_items:
+                if "copy" in item.text.lower():
+                    copy_button = item
+                    break
+        
+        if not copy_button:
+            return "Lỗi: Không tìm thấy button Copy text", 0
+        
+        print("Đã tìm thấy button Copy text, đang nhấn...")
+        
+        # Clear clipboard trước khi copy
+        pyperclip.copy("")
+        
+        # Click button copy
+        try:
+            copy_button.click()
+        except:
+            driver.execute_script("arguments[0].click();", copy_button)
+        
+        time.sleep(2)  # Đợi copy hoàn thành
+        
+    except Exception as e:
+        print(f"Lỗi khi nhấn button Copy text: {str(e)}")
+        return f"Lỗi khi nhấn button Copy text: {str(e)}", 0
+    
+    # Lấy nội dung từ clipboard
+    try:
+        print("Đang lấy nội dung từ clipboard...")
+        response_text = pyperclip.paste()
+        
+        if not response_text or response_text.strip() == "":
+            return "Lỗi: Clipboard trống hoặc copy không thành công", 0
+        
+        print(f"Đã copy thành công {len(response_text)} ký tự")
+        return response_text, len(response_text.split())
+        
+    except Exception as e:
+        print(f"Lỗi khi lấy nội dung từ clipboard: {str(e)}")
+        return f"Lỗi clipboard: {str(e)}", 0
+
 def send_prompt_and_extract(driver, prompt_text, max_retries=3):
     for attempt in range(max_retries):
         try:
@@ -176,200 +354,33 @@ def send_prompt_and_extract(driver, prompt_text, max_retries=3):
             print(f"Lần thử {attempt+1}: Đã gửi prompt, đang chờ phản hồi...")
             time.sleep(5)  # Chờ một chút để AI bắt đầu phản hồi
             
-            # Trích xuất văn bản từ phản hồi
-            full_response, total_spans = extract_all_span_text(driver)
+            # Sử dụng phương pháp mới: đợi và copy
+            full_response, word_count = wait_for_generation_and_copy(driver)
             
             # Kiểm tra nếu cần gửi lại do lỗi
-            if full_response == "ERROR_NEED_RESEND":
-                print(f"Lần thử {attempt+1} gặp lỗi, đang thử lại...")
-                driver.refresh()  # Làm mới trang để reset trạng thái
-                time.sleep(2)
-                continue
+            if full_response.startswith("Lỗi:") or full_response == "ERROR_NEED_RESEND":
+                print(f"Lần thử {attempt+1} gặp lỗi: {full_response}")
+                if attempt < max_retries - 1:
+                    print("Đang thử lại...")
+                    driver.refresh()  # Làm mới trang để reset trạng thái
+                    time.sleep(3)
+                    continue
                 
-            # Nếu trích xuất thành công, trả về kết quả
-            return full_response, total_spans
+            # Nếu thành công, trả về kết quả
+            return full_response, word_count
             
         except Exception as e:
             print(f"Lỗi trong lần thử {attempt+1}: {str(e)}")
             if attempt < max_retries - 1:
                 print("Đang thử lại...")
+                try:
+                    driver.refresh()
+                    time.sleep(3)
+                except:
+                    pass
     
     # Nếu đã thử hết số lần mà vẫn thất bại
-    return f"Không thể trích xuất phản hồi sau {max_retries} lần thử", 0
-def extract_all_span_text(driver, timeout=200, stability_period=3, check_interval=1):
-    wait = WebDriverWait(driver, timeout)
-    
-    # Đợi cho phản hồi bắt đầu hiển thị
-    try:
-        # Đợi cho ms-text-chunk xuất hiện (bất kỳ ms-text-chunk nào)
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "ms-text-chunk")))
-        print("Đã tìm thấy ms-text-chunk, đang đợi nội dung...")
-    except Exception as e:
-        print(f"Không tìm thấy ms-text-chunk: {str(e)}")
-        return f"Lỗi khi chờ đợi phản hồi: {str(e)}", 0
-    
-    # Theo dõi sự ổn định của số lượng spans
-    last_spans_count = 0
-    stable_since = time.time()
-    start_time = time.time()
-    
-    while time.time() - start_time < timeout:
-        # Kiểm tra nếu có thông báo lỗi xuất hiện
-        try:
-            error_message = driver.find_element(By.CSS_SELECTOR, ".model-error")
-            if "An internal error has occurred" in error_message.text:
-                print("⚠️ Phát hiện lỗi nội bộ! Cần gửi lại prompt.")
-                return "ERROR_NEED_RESEND", 0
-        except:
-            # Không tìm thấy thông báo lỗi, tiếp tục bình thường
-            pass
-            
-        # Tìm tất cả ms-text-chunk trong phản hồi của AI
-        text_chunks = driver.find_elements(By.CSS_SELECTOR, "ms-chat-message ms-text-chunk")
-        
-        # Nếu không tìm thấy bằng cách trên, thử cách khác
-        if not text_chunks:
-            # Lấy tất cả text-chunk
-            all_chunks = driver.find_elements(By.CSS_SELECTOR, "ms-text-chunk")
-            
-            # Bỏ qua chunk đầu tiên (câu hỏi của người dùng)
-            if len(all_chunks) > 1:
-                text_chunks = all_chunks[1:]
-            else:
-                text_chunks = all_chunks
-        
-        full_text = ""
-        current_spans_count = 0
-        
-        # Duyệt qua tất cả ms-text-chunk đã lọc
-        for chunk in text_chunks:
-            # Tìm tất cả các thẻ p trong chunk
-            paragraphs = chunk.find_elements(By.CSS_SELECTOR, "p")
-            
-            for paragraph in paragraphs:
-                # Thử với nhiều loại selector khác nhau để tìm spans trong p
-                selectors = [
-                    "span.ng-star-inserted",
-                    "span",
-                    "ms-cmark-node span"
-                ]
-                
-                paragraph_text = ""
-                spans_in_p = []
-                
-                for selector in selectors:
-                    spans_in_p = paragraph.find_elements(By.CSS_SELECTOR, selector)
-                    if spans_in_p:
-                        break
-                
-                # Thu thập văn bản từ tất cả spans trong cùng một p
-                for span in spans_in_p:
-                    try:
-                        span_text = span.text.strip()
-                        if span_text:
-                            paragraph_text += span_text+" "
-                            current_spans_count += 1
-                    except Exception as e:
-                        pass
-                
-                # Thêm nội dung của p vào full_text (một dòng cho mỗi p)
-                if paragraph_text.strip():
-                    full_text += paragraph_text.strip() + "\n"
-            
-            # Nếu không tìm thấy p nào, sử dụng phương pháp cũ
-            if not paragraphs:
-                selectors = [
-                    "span.ng-star-inserted",
-                    "span",
-                    "p span",
-                    ".cmark-node span"
-                ]
-                
-                spans = []
-                for selector in selectors:
-                    spans = chunk.find_elements(By.CSS_SELECTOR, selector)
-                    if spans:
-                        break
-                
-                # Thu thập văn bản từ mỗi span
-                for span in spans:
-                    try:
-                        span_text = span.text.strip()
-                        if span_text:
-                            full_text += span_text + "\n"
-                            current_spans_count += 1
-                    except Exception as e:
-                        pass
-        
-        # In thông tin về số lượng spans tìm thấy
-        elapsed = time.time() - start_time
-        print(f"[{elapsed:.1f}s] Tìm thấy {current_spans_count} spans")
-        
-        # Kiểm tra sự ổn định
-        if current_spans_count > last_spans_count:
-            # Có spans mới, cập nhật thời điểm bắt đầu ổn định
-            last_spans_count = current_spans_count
-            stable_since = time.time()
-            print(f"Phát hiện spans mới: {current_spans_count}, đặt lại thời gian ổn định")
-        elif current_spans_count > 0:
-            # Kiểm tra xem đã ổn định đủ lâu chưa
-            stability_time = time.time() - stable_since
-            print(f"Spans ổn định trong {stability_time:.1f}s / {stability_period}s")
-            
-            if stability_time >= stability_period:
-                print(f"Số lượng spans ổn định trong {stability_period}s, kết thúc trích xuất")
-                return full_text, current_spans_count
-        
-        # Đợi một khoảng thời gian trước khi kiểm tra lại
-        time.sleep(check_interval)
-    
-    # Nếu đã hết thời gian timeout mà vẫn chưa ổn định
-    if last_spans_count > 0:
-        # Trích xuất lần cuối
-        text_chunks = driver.find_elements(By.CSS_SELECTOR, "ms-chat-message ms-text-chunk")
-        if not text_chunks:
-            all_chunks = driver.find_elements(By.CSS_SELECTOR, "ms-text-chunk")
-            if len(all_chunks) > 1:
-                text_chunks = all_chunks[1:]
-            else:
-                text_chunks = all_chunks
-        
-        full_text = ""
-        final_spans_count = 0
-        
-        for chunk in text_chunks:
-            spans = chunk.find_elements(By.CSS_SELECTOR, "span.ng-star-inserted")
-            if not spans:
-                spans = chunk.find_elements(By.CSS_SELECTOR, "span")
-            
-            for span in spans:
-                try:
-                    span_text = span.text.strip()
-                    if span_text:
-                        full_text += span_text + "\n"
-                        final_spans_count += 1
-                except Exception:
-                    pass
-        
-        print(f"Đã hết thời gian chờ. Trích xuất cuối cùng: {final_spans_count} spans")
-        return full_text, final_spans_count
-    
-    # Nếu không tìm thấy spans nào sau thời gian timeout
-    error_msg = "Không tìm thấy spans nào sau khi hết thời gian chờ."
-    print(error_msg)
-    
-    # Thử dùng phương pháp cuối cùng - lấy toàn bộ HTML của phần response
-    try:
-        response_html = driver.find_element(By.CSS_SELECTOR, "ms-chat-message").get_attribute('innerHTML')
-        with open("response_debug.html", "w", encoding="utf-8") as f:
-            f.write(response_html)
-        print("Đã lưu HTML phản hồi vào file response_debug.html để debug")
-    except Exception as e:
-        print(f"Không thể lưu HTML để debug: {str(e)}")
-    
-    return error_msg, 0
-# Đợi và lấy nội dung tất cả span từ ms-text-chunk
-
+    return f"Không thể lấy phản hồi sau {max_retries} lần thử", 0
 
 
 def get_ai_studio_response(prompt, model_name, profile_path=None, driver=None):
@@ -704,6 +715,7 @@ def translate_single_file(api_key, input_file, output_folder, profile_path, api_
             if model is None:
                     model = custom_settings.get("model", "gemini-1.5-flash")
             response_text, spans_count = get_ai_studio_response(prompt, model_name=model, profile_path=profile_path)
+            end_chrome_portable(f"{os.getcwd()}/ChromePortable/App/Chrome-bin/chrome.exe")
             translated_text = response_text
             
 
