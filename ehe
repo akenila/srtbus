@@ -109,9 +109,9 @@ def select_model(driver, model_name=None, section_name=None):
         # Xác định xpath đề mục dựa trên tên section
         section_xpath = None
         if section_name.strip().lower() == "gemini 2.5":
-            section_xpath = '//*[@id="mat-select-1-panel"]/div/div[1]/div[1]'
+            section_xpath = '//*[@id="mat-select-2-panel"]/div/div[1]/div[1]/span'
         elif section_name.strip().lower() == "gemini 2.0":
-            section_xpath = '//*[@id="mat-select-1-panel"]/div/div[1]/div[2]'
+            section_xpath = '//*[@id="mat-select-2-panel"]/div/div[1]/div[2]/span'
         else:
             # fallback: tìm theo text nếu không phải 2 đề mục trên
             sidebar_sections = driver.find_elements(By.CSS_SELECTOR, ".mat-mdc-select-panel .mat-mdc-optgroup-label")
@@ -123,21 +123,87 @@ def select_model(driver, model_name=None, section_name=None):
             else:
                 raise Exception(f"Không tìm thấy đề mục: {section_name}")
         if section_xpath:
+            print(f"Đang chọn đề mục: {section_name} với xpath: {section_xpath}")
             section_elem = wait.until(EC.element_to_be_clickable((By.XPATH, section_xpath)))
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", section_elem)
             section_elem.click()
+            print(f"Đã chọn đề mục: {section_name}")
 
     # Nếu có model_name thì chọn model trong đề mục đó
     if model_name:
+        print(f"Đang chọn model: {model_name}")
         time.sleep(1)
-        # Chọn model theo span có class "model-name" và đúng text
-        xpath = f'//span[contains(@class, "model-name") and normalize-space(text())="{model_name}"]'
-        try:
-            model_elem = wait.until(EC.element_to_be_clickable((By.XPATH, xpath)))
-            driver.execute_script("arguments[0].scrollIntoView({block: \'center\'});", model_elem)
-            model_elem.click()
-            return
-        except Exception:
+        
+        # Thử nhiều selector khác nhau để tìm model
+        selectors_to_try = [
+            # Tìm theo div có class chứa "base-model-subtitle" và text chính xác
+            f'//div[contains(@class, "base-model-subtitle") and normalize-space(text())="{model_name}"]',
+            # Tìm theo div có class "model-name" và text chính xác
+            f'//div[contains(@class, "model-name") and normalize-space(text())="{model_name}"]',
+            # Tìm theo span chứa text model (fallback)
+            f'//span[normalize-space(text())="{model_name}"]',
+            # Tìm theo bất kỳ element nào chứa text model
+            f'//*[normalize-space(text())="{model_name}"]'
+        ]
+        
+        model_elem = None
+        for selector in selectors_to_try:
+            try:
+                print(f"Đang thử selector: {selector}")
+                elements = driver.find_elements(By.XPATH, selector)
+                
+                if elements:
+                    # Kiểm tra từng element để tìm cái có thể click được
+                    for elem in elements:
+                        if elem.is_displayed() and elem.is_enabled():
+                            model_elem = elem
+                            print(f"Tìm thấy model element với selector: {selector}")
+                            break
+                    
+                    if model_elem:
+                        break
+                        
+            except Exception as e:
+                print(f"Lỗi với selector {selector}: {str(e)}")
+                continue
+        
+        if not model_elem:
+            # Nếu không tìm thấy bằng text chính xác, thử tìm bằng text chứa một phần
+            try:
+                print(f"Thử tìm model chứa text: {model_name}")
+                partial_selector = f'//*[contains(normalize-space(text()), "{model_name}")]'
+                elements = driver.find_elements(By.XPATH, partial_selector)
+                
+                for elem in elements:
+                    if elem.is_displayed() and elem.is_enabled():
+                        model_elem = elem
+                        print(f"Tìm thấy model element với partial match")
+                        break
+                        
+            except Exception as e:
+                print(f"Lỗi khi tìm partial match: {str(e)}")
+        
+        if model_elem:
+            try:
+                # Scroll vào view và click
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", model_elem)
+                time.sleep(0.5)
+                
+                # Thử click trực tiếp trước
+                try:
+                    model_elem.click()
+                    print(f"Đã chọn model: {model_name}")
+                    return
+                except:
+                    # Nếu click trực tiếp không được, thử click bằng JavaScript
+                    driver.execute_script("arguments[0].click();", model_elem)
+                    print(f"Đã chọn model bằng JavaScript: {model_name}")
+                    return
+                    
+            except Exception as e:
+                print(f"Lỗi khi click model element: {str(e)}")
+                raise Exception(f"Không thể click vào model: {model_name}")
+        else:
             raise Exception(f"Không tìm thấy model: {model_name}")
 def wait_for_generation_and_copy(driver, timeout=600):
     """
@@ -429,7 +495,7 @@ def get_ai_studio_response(prompt, model_name, profile_path=None, driver=None):
     try:
         # Mở menu chọn model
         try:
-            element = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="mat-select-value-1"]/span')))
+            element = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="mat-select-value-2"]/span/mat-select-trigger/div')))
             element.click()
         except Exception as e:
             print(f"Không thể mở menu chọn model: {str(e)}")
@@ -527,6 +593,7 @@ def translate_file_thread(api_key, input_path, output_folder, translate_button, 
             translate_single_file(api_key, input_path, output_folder, profile_path, api_type, perplexity_category = perplexity_category, cookies = cookies, model=model)
             
     except Exception as e:
+        print(f"Error during translation: {str(e)}")
         messagebox.showerror("Error", f"Failed to translate: {e}")
     finally:
         translate_button.config(text="Translate")
